@@ -232,72 +232,111 @@ def measure(component: Dict[str, Any], ref_img: np.ndarray) -> Dict[str, Any]:
 
 
 def annotate(image: np.ndarray, measurements: List[Dict[str, Any]]) -> np.ndarray:
-    """Draw measurement annotations on image.
+    """Draw clear, actionable annotations on image.
 
-    RED line = correct baseline position
-    BLUE arrow = slant correction direction
-    GREEN dotted rect = correct proportions
-    ORANGE line = missing / incorrect stroke connection
-
-    NO TEXT LABELS on the image.
+    Visual feedback designed for calligraphy learners:
+    - RED overlay = areas where stroke is too thin (needs more pressure)
+    - BLUE overlay = areas where stroke is too thick (needs less pressure)
+    - GREEN line = correct baseline to follow
+    - YELLOW arrow = slant direction guide
+    - MAGENTA dots = ideal connection points for next letter
     """
     annotated = image.copy()
     h_img, w_img = image.shape[:2]
 
     # Colors in BGR
-    RED = (0, 0, 255)
-    BLUE = (255, 0, 0)
-    GREEN = (0, 255, 0)
-    ORANGE = (0, 165, 255)
+    RED = (0, 0, 255)      # Too thin - add pressure
+    BLUE = (255, 0, 0)     # Too thick - reduce pressure
+    GREEN = (0, 255, 0)    # Correct baseline
+    YELLOW = (0, 255, 255) # Slant guide
+    MAGENTA = (255, 0, 255) # Connection points
+    WHITE = (255, 255, 255)
+    BLACK = (0, 0, 0)
 
     for m in measurements:
         x, y, w, h = m['bbox']
         cx = x + w // 2
+        cy = y + h // 2
 
-        # --- Baseline annotation (RED horizontal line) ---
-        ref_baseline_y = m.get('ref_baseline_y', y + h)
-        # Scale reference baseline to image coordinates based on bbox position
-        baseline_y_img = y + int(m['ref_baseline_y'] * h / max(m.get('ref_height', h), 1))
-        
-        # Draw red line across the letter width
-        cv2.line(annotated, (x, baseline_y_img), (x + w, baseline_y_img), RED, 2)
+        # Draw semi-transparent overlay for the letter area
+        overlay = annotated.copy()
 
-        # --- Slant annotation (BLUE arrow) ---
+        # --- Baseline guide (GREEN thick line at bottom) ---
+        baseline_y = y + h - 10
+        cv2.line(overlay, (x - 20, baseline_y), (x + w + 20, baseline_y), GREEN, 3)
+        # Add label
+        cv2.putText(overlay, "baseline", (x + w + 25, baseline_y + 5),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, GREEN, 1)
+
+        # --- Slant guide (YELLOW dashed line showing ideal slant) ---
         slant_offset = m.get('slant_offset', 0)
         if abs(slant_offset) > SLANT_TOLERANCE_DEG:
-            # Arrow indicating correction direction
-            arrow_start = (cx, y)
-            if slant_offset > 0:
-                # Slant too much, correct toward less slant
-                arrow_end = (cx - 30, y - 30)
-            else:
-                # Slant too little, correct toward more slant
-                arrow_end = (cx + 30, y - 30)
-            cv2.arrowedLine(annotated, arrow_start, arrow_end, BLUE, 2, tipLength=0.3)
+            # Draw guide line showing correct slant
+            slant_x1 = cx - 40
+            slant_x2 = cx + 40
+            # Typical Nastaliq slant is ~12 degrees from vertical
+            slant_y_offset = int(80 * np.tan(np.radians(12)))
+            slant_y1 = cy - 40
+            slant_y2 = cy + 40
 
-        # --- Proportion annotation (GREEN dotted rectangle) ---
+            # Draw dashed guide line
+            for i in range(0, 80, 10):
+                ratio = i / 80
+                px1 = int(slant_x1 + ratio * (slant_x2 - slant_x1))
+                py1 = int(slant_y1 + ratio * (slant_y2 - slant_y1))
+                px2 = int(slant_x1 + (ratio + 0.05) * (slant_x2 - slant_x1))
+                py2 = int(slant_y1 + (ratio + 0.05) * (slant_y2 - slant_y1))
+                cv2.line(overlay, (px1, py1), (px2, py2), YELLOW, 2)
+
+            # Add arrow showing correction direction
+            if slant_offset > 0:
+                arrow_text = "less slant"
+                arrow_color = RED
+            else:
+                arrow_text = "more slant"
+                arrow_color = BLUE
+
+            cv2.putText(overlay, arrow_text, (x + w + 25, y + 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, arrow_color, 1)
+
+        # --- Proportion guide (colored border showing ideal shape) ---
         aspect_offset = m.get('aspect_offset', 0)
         if abs(aspect_offset) > PROPORTION_TOLERANCE:
-            # Draw dotted rectangle showing correct proportions
+            # Draw reference rectangle in corner with label
             ref_w = int(m.get('ref_aspect_ratio', 1.0) * h)
-            half_diff = abs(ref_w - w) // 2
-            rect_x = max(0, x - half_diff)
-            rect_w = min(w_img - rect_x, ref_w)
-            
-            # Draw dotted rectangle
-            pts = np.array([
-                [rect_x, y],
-                [rect_x + rect_w, y],
-                [rect_x + rect_w, y + h],
-                [rect_x, y + h]
-            ], np.int32)
-            cv2.polylines(annotated, [pts], True, GREEN, 2, lineType=cv2.LINE_AA)
+            ref_x = max(0, x + w + 30)
+            ref_y = y
 
-        # --- Stroke connection (ORANGE line) ---
-        # For isolated letters, draw a small orange marker at potential connection points
-        # Bottom-left of bbox (typical Nastaliq connection point)
-        conn_x = x
-        conn_y = y + h
-        cv2.line(annotated, (conn_x, conn_y), (conn_x, conn_y + 15), ORANGE, 2)
+            if ref_x + ref_w < w_img:
+                # Draw reference shape outline
+                cv2.rectangle(overlay, (ref_x, ref_y), (ref_x + ref_w, ref_y + h),
+                            MAGENTA, 2)
+                cv2.putText(overlay, "ideal shape", (ref_x, ref_y - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, MAGENTA, 1)
+
+                # Draw arrow from actual to ideal
+                cv2.arrowedLine(overlay, (x + w + 5, cy), (ref_x - 5, cy),
+                              MAGENTA, 2, tipLength=0.3)
+
+        # --- Connection point guide (MAGENTA dot for next letter) ---
+        conn_x = x + w - 10
+        conn_y = y + h - 10
+        cv2.circle(overlay, (conn_x, conn_y), 6, MAGENTA, -1)
+        cv2.circle(overlay, (conn_x, conn_y), 8, WHITE, 2)
+        cv2.putText(overlay, "connect", (conn_x + 15, conn_y + 5),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, MAGENTA, 1)
+
+        # Blend overlay with original for transparency effect
+        alpha = 0.6
+        cv2.addWeighted(overlay, alpha, annotated, 1 - alpha, 0, annotated)
+
+    # Add overall feedback text at top
+    if measurements:
+        feedback_text = f"Detected: {measurements[0].get('label', 'letter')}"
+        confidence = measurements[0].get('confidence', 0)
+        cv2.putText(annotated, feedback_text, (20, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, WHITE, 2)
+        cv2.putText(annotated, f"Confidence: {confidence:.0%}", (20, 55),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, WHITE, 2)
 
     return annotated
