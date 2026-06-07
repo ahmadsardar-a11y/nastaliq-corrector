@@ -146,12 +146,16 @@
     <h1>✍️ Nastaliq Corrector</h1>
     <p class="subtitle">Upload your Urdu calligraphy practice photo</p>
 
+    <div style="text-align:center; margin-bottom:16px;">
+        <a href="#" onclick="document.getElementById('fileInput').click(); return false;" style="color:#1976d2; font-size:0.85rem;">Tap here to upload photo</a>
+    </div>
+
     <div class="upload-area" id="dropZone">
         <input type="file" id="fileInput" accept="image/*" capture="environment">
         <div class="upload-icon">📷</div>
         <div class="upload-text">Tap to take photo or select image</div>
         <div class="upload-hint">JPEG or PNG, max 10MB</div>
-        <button class="btn" id="uploadBtn">Choose Photo</button>
+        <button type="button" class="btn" id="uploadBtn">Choose Photo</button>
     </div>
 
     <div class="status" id="status" style="display:none; text-align:center; padding:12px; background:#e3f2fd; border-radius:8px; margin-bottom:16px; color:#1976d2; font-size:0.9rem;"></div>
@@ -230,7 +234,13 @@
         });
 
         fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length) handleFile(e.target.files[0]);
+            console.log('File input change event fired');
+            console.log('Files:', e.target.files);
+            if (e.target.files.length) {
+                handleFile(e.target.files[0]);
+            } else {
+                console.log('No files selected');
+            }
         });
 
         function handleFile(file) {
