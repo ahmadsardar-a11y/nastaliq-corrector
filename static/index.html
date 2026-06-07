@@ -154,6 +154,8 @@
         <button class="btn" id="uploadBtn">Choose Photo</button>
     </div>
 
+    <div class="status" id="status" style="display:none; text-align:center; padding:12px; background:#e3f2fd; border-radius:8px; margin-bottom:16px; color:#1976d2; font-size:0.9rem;"></div>
+
     <div id="preview">
         <p style="font-size:0.9rem; color:#666; margin-bottom:8px;">Original:</p>
         <img id="previewImg" alt="Original">
@@ -203,6 +205,13 @@
         const resultImg = document.getElementById('resultImg');
         const legend = document.getElementById('legend');
 
+        const statusDiv = document.getElementById('status');
+
+        function setStatus(msg) {
+            statusDiv.textContent = msg;
+            statusDiv.style.display = msg ? 'block' : 'none';
+        }
+
         uploadBtn.addEventListener('click', () => fileInput.click());
         dropZone.addEventListener('click', () => fileInput.click());
 
@@ -235,6 +244,7 @@
             }
 
             errorDiv.classList.remove('active');
+            setStatus('Loading preview...');
             preview.style.display = 'block';
             resultDiv.style.display = 'none';
             legend.style.display = 'none';
@@ -242,12 +252,20 @@
             const reader = new FileReader();
             reader.onload = (e) => {
                 previewImg.src = e.target.result;
+                console.log('Preview loaded, starting upload...');
+                setStatus('');
                 upload(file);
+            };
+            reader.onerror = (e) => {
+                console.error('FileReader error:', e);
+                setStatus('');
+                showError('Failed to read image file.');
             };
             reader.readAsDataURL(file);
         }
 
         async function upload(file) {
+            setStatus('Uploading photo...');
             spinner.classList.add('active');
             console.log('Uploading file:', file.name, 'type:', file.type, 'size:', file.size);
 
@@ -271,6 +289,7 @@
                         const data = JSON.parse(text);
                         msg = data.detail || msg;
                     } catch (e) {}
+                    setStatus('');
                     showError(msg);
                     return;
                 }
@@ -281,8 +300,10 @@
                 resultImg.src = url;
                 resultDiv.style.display = 'block';
                 legend.style.display = 'block';
+                setStatus('Analysis complete!');
             } catch (err) {
                 spinner.classList.remove('active');
+                setStatus('');
                 console.error('Upload error:', err);
                 showError('Network error. Please check your connection and try again.');
             }
