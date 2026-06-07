@@ -73,58 +73,53 @@ def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
     - 'bbox': (x, y, w, h) bounding rect
     - 'contour': the contour
     """
-    # Distance transform to find thick parts (letters) vs thin parts (lines)
-    dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
-    
-    # Threshold to keep only thick parts (letters)
-    _, thick_parts = cv2.threshold(dist, 5, 255, cv2.THRESH_BINARY)
-    thick_parts = thick_parts.astype(np.uint8)
-    
-    # Find connected components on thick parts
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thick_parts, connectivity=8)
-    
-    h_total, w_total = thick_parts.shape
+    # Find connected components with stats
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+
+    h_total, w_total = binary.shape
     max_area = MAX_COMPONENT_AREA * h_total * w_total
-    
+
     components = []
     for i in range(1, num_labels):  # skip background (0)
         x, y, w, h, area = stats[i]
-        
-        # Filter by size
+
+        # Filter by size — remove noise specks and huge artifacts
         if area < MIN_COMPONENT_AREA or area > max_area:
             continue
-        
-        # Filter out obvious lines
-        is_long_horizontal = w > h * 8 and h < 10
-        is_long_vertical = h > w * 8 and w < 10
+
+        # Filter out long thin lines (practice lines, not letters)
+        # A line is very long in one dimension and very short in the other
+        is_long_horizontal = w > h * 8 and h < 10  # Wide but short
+        is_long_vertical = h > w * 8 and w < 10    # Tall but narrow
         if is_long_horizontal or is_long_vertical:
+            continue  # Definitely a practice line
+
+        # Also filter by filling ratio - letters have more solid area
+        # A line has a very low filling ratio compared to its bounding box
+        bbox_area = w * h
+        fill_ratio = area / bbox_area if bbox_area > 0 else 0
+        if fill_ratio < 0.15 and (w > h * 3 or h > w * 3):
+            # Very sparse component - likely a line or artifact
             continue
-        
-        # Extract mask from the thick parts
+
+        # Extract mask for this component
         mask = np.zeros_like(binary)
         mask[labels == i] = 255
-        
-        # Dilate the mask to include the original letter shape
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.dilate(mask, kernel, iterations=2)
-        
-        # Find contour
+
+        # Find contour of this mask
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             continue
-        
+
         contour = max(contours, key=cv2.contourArea)
-        
-        # Recalculate bounding box
-        x, y, w, h = cv2.boundingRect(contour)
-        
+
         components.append({
             'mask': mask,
             'bbox': (x, y, w, h),
             'contour': contour,
             'area': area
         })
-    
+
     return components
 
 
