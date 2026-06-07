@@ -247,111 +247,88 @@ def measure(component: Dict[str, Any], ref_img: np.ndarray) -> Dict[str, Any]:
 
 
 def annotate(image: np.ndarray, measurements: List[Dict[str, Any]], references: Dict[str, np.ndarray] = None) -> np.ndarray:
-    """Draw ideal letter overlay on user's writing for direct visual comparison."""
+    """Draw bold ideal letter outline for clear visual comparison."""
     annotated = image.copy()
     h_img, w_img = image.shape[:2]
 
-    CYAN = (255, 255, 0)
-    MAGENTA = (255, 0, 255)
-    GREEN = (0, 255, 0)
+    CYAN = (255, 255, 0)     # Ideal outline
+    GREEN = (0, 255, 0)      # Baseline
+    MAGENTA = (255, 0, 255)  # Connection
     WHITE = (255, 255, 255)
 
-    for m in measurements:
-        x, y, w, h = m['bbox']
-        label = m.get('label', '')
-        confidence = m.get('confidence', 0)
+    if not measurements:
+        return annotated
 
-        # Skip if confidence is too low (likely not a real letter)
-        if confidence < 0.3:
-            continue
+    # Only annotate the largest component (ignore tiny fragments/dots)
+    measurements = sorted(measurements, key=lambda m: m.get('area', 0), reverse=True)
+    m = measurements[0]
 
-        # --- Draw ideal letter overlay ---
-        if references and label in references:
-            ref_img = references[label]
-            ref_h, ref_w = ref_img.shape[:2]
+    x, y, w, h = m['bbox']
+    label = m.get('label', '')
+    confidence = m.get('confidence', 0)
 
-            # Resize reference to match user's letter size
-            scale = min(w / ref_w, h / ref_h) if ref_w > 0 and ref_h > 0 else 1.0
-            new_w = int(ref_w * scale)
-            new_h = int(ref_h * scale)
+    # --- Draw ideal letter as bold outline ---
+    if references and label in references:
+        ref_img = references[label]
+        ref_h, ref_w = ref_img.shape[:2]
 
-            if new_w > 0 and new_h > 0:
-                # Resize reference image
-                ref_resized = cv2.resize(ref_img, (new_w, new_h))
+        if ref_w > 0 and ref_h > 0:
+            # Resize reference to match user's letter bbox
+            scale = min(w / ref_w, h / ref_h)
+            new_w = max(1, int(ref_w * scale))
+            new_h = max(1, int(ref_h * scale))
 
-                # Calculate position to center the reference over user's letter
-                offset_x = x + (w - new_w) // 2
-                offset_y = y + (h - new_h) // 2
+            ref_resized = cv2.resize(ref_img, (new_w, new_h))
 
-                # Ensure we stay within image bounds
-                x1 = max(0, offset_x)
-                y1 = max(0, offset_y)
-                x2 = min(w_img, offset_x + new_w)
-                y2 = min(h_img, offset_y + new_h)
+            # Center the reference over user's letter
+            offset_x = x + (w - new_w) // 2
+            offset_y = y + (h - new_h) // 2
 
-                # Extract the region from reference that fits
-                ref_x1 = max(0, -offset_x)
-                ref_y1 = max(0, -offset_y)
-                ref_x2 = ref_x1 + (x2 - x1)
-                ref_y2 = ref_y1 + (y2 - y1)
+            # Clamp to image bounds
+            x1 = max(0, offset_x)
+            y1 = max(0, offset_y)
+            x2 = min(w_img, offset_x + new_w)
+            y2 = min(h_img, offset_y + new_h)
 
-                ref_crop = ref_resized[ref_y1:ref_y2, ref_x1:ref_x2]
+            # Map back to reference coords
+            rx1 = max(0, -offset_x)
+            ry1 = max(0, -offset_y)
+            rx2 = rx1 + (x2 - x1)
+            ry2 = ry1 + (y2 - y1)
 
-                if ref_crop.size > 0:
-                    # Create colored overlay
-                    overlay = annotated.copy()
+            ref_crop = ref_resized[ry1:ry2, rx1:rx2]
 
-                    # Convert to BGR if grayscale
-                    if len(ref_crop.shape) == 2:
-                        ref_color = cv2.cvtColor(ref_crop, cv2.COLOR_GRAY2BGR)
-                    else:
-                        ref_color = ref_crop
+            if ref_crop.size > 0:
+                # Threshold to get letter mask from reference
+                if len(ref_crop.shape) == 3:
+                    ref_gray = cv2.cvtColor(ref_crop, cv2.COLOR_BGR2GRAY)
+                else:
+                    ref_gray = ref_crop
 
-                    # Create mask from reference (black pixels are the letter)
-                    ref_gray = cv2.cvtColor(ref_color, cv2.COLOR_BGR2GRAY)
-                    _, ref_mask = cv2.threshold(ref_gray, 200, 255, cv2.THRESH_BINARY_INV)
+                _, ref_mask = cv2.threshold(ref_gray, 200, 255, cv2.THRESH_BINARY_INV)
 
-                    # Create cyan colored letter
-                    cyan_letter = np.zeros_like(ref_color)
-                    cyan_letter[:, :] = CYAN
+                # Find outer contour of ideal letter
+                ref_contours, _ = cv2.findContours(ref_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                    # Only keep cyan where the reference letter is
-                    cyan_masked = cv2.bitwise_and(cyan_letter, cyan_letter, mask=ref_mask)
+                # Shift contours to image position
+                for cnt in ref_contours:
+                    cnt_shifted = cnt + np.array([[x1, y1]])
+                    # Thick bold outline
+                    cv2.drawContours(annotated, [cnt_shifted], -1, CYAN, 4)
 
-                    # Blend with semi-transparency
-                    region = overlay[y1:y2, x1:x2]
-                    alpha = 0.5
-                    blended = cv2.addWeighted(cyan_masked, alpha, region, 1 - alpha, 0)
-                    overlay[y1:y2, x1:x2] = blended
+    # --- Baseline ---
+    baseline_y = y + h - 5
+    cv2.line(annotated, (x - 10, baseline_y), (x + w + 10, baseline_y), GREEN, 2)
 
-                    # Draw outline around the reference letter
-                    ref_contours, _ = cv2.findContours(ref_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    for cnt in ref_contours:
-                        cnt_offset = cnt + np.array([[x1, y1]])
-                        cv2.drawContours(overlay, [cnt_offset], -1, CYAN, 2)
+    # --- Connection point ---
+    conn_x = x + w - 5
+    conn_y = y + h - 5
+    cv2.circle(annotated, (conn_x, conn_y), 4, MAGENTA, -1)
 
-                    annotated = overlay
-
-                    # Add label
-                    cv2.putText(annotated, "ideal", (x1, max(20, y1 - 5)),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, CYAN, 1)
-
-        # --- Baseline guide ---
-        baseline_y = y + h - 5
-        cv2.line(annotated, (x - 10, baseline_y), (x + w + 10, baseline_y), GREEN, 2)
-
-        # --- Connection point ---
-        conn_x = x + w - 5
-        conn_y = y + h - 5
-        cv2.circle(annotated, (conn_x, conn_y), 4, MAGENTA, -1)
-
-    # Add letter detection info at top
-    if measurements:
-        label = measurements[0].get('label', 'letter')
-        confidence = measurements[0].get('confidence', 0)
-        cv2.putText(annotated, f"Detected: {label} ({confidence:.0%})", (20, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, WHITE, 2)
-        cv2.putText(annotated, "Cyan = ideal shape", (20, 55),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, CYAN, 2)
+    # --- Header text ---
+    cv2.putText(annotated, f"Detected: {label} ({confidence:.0%})", (20, 30),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, WHITE, 2)
+    cv2.putText(annotated, "Cyan outline = ideal shape", (20, 55),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, CYAN, 2)
 
     return annotated
