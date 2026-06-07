@@ -1,7 +1,7 @@
 """FastAPI application for Nastaliq calligraphy correction."""
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 import cv2
@@ -108,7 +108,11 @@ async def upload_simple(file: UploadFile = File(...)):
     return Response(content=buf.tobytes(), media_type="image/png")
 
 
-# Serve static files (frontend)
+# Serve static files (frontend) — mount at /static, serve index.html at root
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/")
+    def serve_index():
+        return FileResponse(static_dir / "index.html")
