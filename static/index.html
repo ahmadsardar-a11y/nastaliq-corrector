@@ -217,7 +217,10 @@
         }
 
         uploadBtn.addEventListener('click', () => fileInput.click());
-        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('click', (e) => {
+            e.preventDefault();
+            fileInput.click();
+        });
 
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
