@@ -36,7 +36,7 @@ def quality_gate(image: np.ndarray) -> Tuple[bool, str]:
         return (False, "Photo is too dark. Please take photo with better lighting.")
 
     # Blur check (Laplacian variance)
-    # Skip for nearly-uniform images (lap_var near 0) — these are blank/synthetic,
+    # Skip for nearly-uniform images (lap_var near 0) - these are blank/synthetic,
     # not blurry photos. Real blurry photos still have variance > 1.0.
     lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
     if 0.1 < lap_var < QUALITY_MIN_VARIANCE and mean_brightness < 240:
@@ -65,17 +65,6 @@ def preprocess(image: np.ndarray) -> np.ndarray:
     return binary
 
 
-def remove_horizontal_lines(binary: np.ndarray) -> np.ndarray:
-    """Remove long horizontal lines (practice paper lines) from binary image."""
-    # Use horizontal kernel to detect horizontal lines
-    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (50, 1))
-    # Detect horizontal lines
-    horizontal_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel, iterations=2)
-    # Remove horizontal lines from binary image
-    result = cv2.subtract(binary, horizontal_lines)
-    return result
-
-
 def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
     """Segment preprocessed image into individual letter components.
 
@@ -84,48 +73,58 @@ def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
     - 'bbox': (x, y, w, h) bounding rect
     - 'contour': the contour
     """
-    # Remove horizontal practice lines first
-    binary_clean = remove_horizontal_lines(binary)
-
-    # Find connected components with stats
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_clean, connectivity=8)
-
-    h_total, w_total = binary_clean.shape
+    # Distance transform to find thick parts (letters) vs thin parts (lines)
+    dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    
+    # Threshold to keep only thick parts (letters)
+    _, thick_parts = cv2.threshold(dist, 5, 255, cv2.THRESH_BINARY)
+    thick_parts = thick_parts.astype(np.uint8)
+    
+    # Find connected components on thick parts
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thick_parts, connectivity=8)
+    
+    h_total, w_total = thick_parts.shape
     max_area = MAX_COMPONENT_AREA * h_total * w_total
-
+    
     components = []
     for i in range(1, num_labels):  # skip background (0)
         x, y, w, h, area = stats[i]
-
-        # Filter by size — remove noise specks and huge artifacts
+        
+        # Filter by size
         if area < MIN_COMPONENT_AREA or area > max_area:
             continue
-
-        # Filter out long thin lines (practice lines, not letters)
-        # A line is very long in one dimension and very short in the other
-        is_long_horizontal = w > h * 5 and h < 10  # Wide but short
-        is_long_vertical = h > w * 5 and w < 10    # Tall but narrow
+        
+        # Filter out obvious lines
+        is_long_horizontal = w > h * 8 and h < 10
+        is_long_vertical = h > w * 8 and w < 10
         if is_long_horizontal or is_long_vertical:
-            continue  # Definitely a practice line
-
-        # Extract mask for this component
+            continue
+        
+        # Extract mask from the thick parts
         mask = np.zeros_like(binary)
         mask[labels == i] = 255
-
-        # Find contour of this mask
+        
+        # Dilate the mask to include the original letter shape
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.dilate(mask, kernel, iterations=2)
+        
+        # Find contour
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             continue
-
+        
         contour = max(contours, key=cv2.contourArea)
-
+        
+        # Recalculate bounding box
+        x, y, w, h = cv2.boundingRect(contour)
+        
         components.append({
             'mask': mask,
             'bbox': (x, y, w, h),
             'contour': contour,
             'area': area
         })
-
+    
     return components
 
 
