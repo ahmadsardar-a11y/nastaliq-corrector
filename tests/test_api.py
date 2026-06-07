@@ -16,7 +16,7 @@ def client() -> TestClient:
 
 class TestHealthCheck:
     def test_health_check_returns_ok(self, client: TestClient):
-        response = client.get("/")
+        response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"

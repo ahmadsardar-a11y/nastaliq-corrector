@@ -25,9 +25,18 @@ def get_references():
     return _ref_cache
 
 
-@app.get("/")
-def health_check():
-    return {"status": "ok", "service": "nastaliq-corrector"}
+# Serve static files (frontend) — mount at /static, serve index.html at root
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/")
+    def serve_index():
+        return FileResponse(static_dir / "index.html")
+
+    @app.get("/health")
+    def health_check():
+        return {"status": "ok", "service": "nastaliq-corrector"}
 
 
 @app.post("/upload-simple")
@@ -106,13 +115,3 @@ async def upload_simple(file: UploadFile = File(...)):
     # Return as PNG
     _, buf = cv2.imencode(".png", annotated)
     return Response(content=buf.tobytes(), media_type="image/png")
-
-
-# Serve static files (frontend) — mount at /static, serve index.html at root
-static_dir = Path(__file__).parent / "static"
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-    @app.get("/")
-    def serve_index():
-        return FileResponse(static_dir / "index.html")
