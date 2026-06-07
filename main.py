@@ -56,9 +56,20 @@ async def upload_simple(file: UploadFile = File(...)):
             detail="Image too large. Max size: 10MB."
         )
 
-    # Convert to OpenCV image
+    # Convert to OpenCV image with EXIF orientation handling
     try:
         pil_img = Image.open(io.BytesIO(contents))
+        # Handle EXIF orientation
+        if hasattr(pil_img, '_getexif') and pil_img._getexif() is not None:
+            exif = pil_img._getexif()
+            orientation = exif.get(274, 1)  # 274 is Orientation tag
+            # Rotate based on EXIF orientation
+            if orientation == 3:
+                pil_img = pil_img.rotate(180, expand=True)
+            elif orientation == 6:
+                pil_img = pil_img.rotate(270, expand=True)
+            elif orientation == 8:
+                pil_img = pil_img.rotate(90, expand=True)
         # Convert to RGB if needed
         if pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")
