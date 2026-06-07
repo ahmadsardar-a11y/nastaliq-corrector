@@ -121,7 +121,7 @@ async def upload_simple(file: UploadFile = File(...)):
         measurements.append(measurement)
 
     # Annotate
-    annotated = annotate(image, measurements)
+    annotated = annotate(image, measurements, references)
 
     # Return as PNG
     _, buf = cv2.imencode(".png", annotated)
