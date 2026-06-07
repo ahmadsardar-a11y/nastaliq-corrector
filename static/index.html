@@ -35,11 +35,8 @@
             cursor: pointer;
             transition: border-color 0.2s;
         }
-        .upload-area:hover, .upload-area.dragover {
+        .upload-area:hover {
             border-color: #4CAF50;
-        }
-        .upload-area input {
-            display: none;
         }
         .upload-icon {
             font-size: 3rem;
@@ -64,10 +61,6 @@
             font-size: 1rem;
             cursor: pointer;
             margin-top: 12px;
-        }
-        .btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
         }
         #preview {
             display: none;
@@ -118,27 +111,18 @@
         .error.active {
             display: block;
         }
-        .legend {
-            background: white;
+        .status {
+            text-align: center;
+            padding: 12px;
+            background: #e3f2fd;
             border-radius: 8px;
-            padding: 16px;
-            font-size: 0.85rem;
+            margin-bottom: 16px;
+            color: #1976d2;
+            font-size: 0.9rem;
+            display: none;
         }
-        .legend h3 {
-            font-size: 1rem;
-            margin-bottom: 10px;
-        }
-        .legend-item {
-            display: flex;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-        .legend-color {
-            width: 24px;
-            height: 4px;
-            border-radius: 2px;
-            margin-right: 10px;
-            flex-shrink: 0;
+        .status.active {
+            display: block;
         }
     </style>
 </head>
@@ -146,19 +130,16 @@
     <h1>✍️ Nastaliq Corrector</h1>
     <p class="subtitle">Upload your Urdu calligraphy practice photo</p>
 
-    <div style="text-align:center; margin-bottom:16px;">
-        <a href="#" onclick="document.getElementById('fileInput').click(); return false;" style="color:#1976d2; font-size:0.85rem;">Tap here to upload photo</a>
-    </div>
-
-    <div class="upload-area" id="dropZone">
-        <input type="file" id="fileInput" accept="image/*" capture="environment">
+    <div class="upload-area" onclick="document.getElementById('fileInput').click()">
         <div class="upload-icon">📷</div>
         <div class="upload-text">Tap to take photo or select image</div>
         <div class="upload-hint">JPEG or PNG, max 10MB</div>
-        <button type="button" class="btn" id="uploadBtn">Choose Photo</button>
+        <button type="button" class="btn" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">Choose Photo</button>
     </div>
 
-    <div class="status" id="status" style="display:none; text-align:center; padding:12px; background:#e3f2fd; border-radius:8px; margin-bottom:16px; color:#1976d2; font-size:0.9rem;"></div>
+    <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFile(this.files[0])">
+
+    <div class="status" id="status"></div>
 
     <div id="preview">
         <p style="font-size:0.9rem; color:#666; margin-bottom:8px;">Original:</p>
@@ -177,76 +158,30 @@
         <img id="resultImg" alt="Annotated">
     </div>
 
-    <div class="legend" id="legend" style="display:none;">
-        <h3>Annotation Guide</h3>
-        <div class="legend-item">
-            <div class="legend-color" style="background:#f44336;"></div>
-            <span>Red line — correct baseline position</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background:#2196F3;"></div>
-            <span>Blue arrow — slant correction direction</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background:#4CAF50; border:2px dotted #4CAF50; height:0;"></div>
-            <span>Green dotted box — correct proportions</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background:#FF9800;"></div>
-            <span>Orange line — stroke connection point</span>
-        </div>
-    </div>
-
     <script>
-        const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const preview = document.getElementById('preview');
-        const previewImg = document.getElementById('previewImg');
-        const spinner = document.getElementById('spinner');
-        const errorDiv = document.getElementById('error');
-        const resultDiv = document.getElementById('result');
-        const resultImg = document.getElementById('resultImg');
-        const legend = document.getElementById('legend');
-
-        const statusDiv = document.getElementById('status');
-
         function setStatus(msg) {
-            statusDiv.textContent = msg;
-            statusDiv.style.display = msg ? 'block' : 'none';
+            const statusDiv = document.getElementById('status');
+            if (msg) {
+                statusDiv.textContent = msg;
+                statusDiv.classList.add('active');
+            } else {
+                statusDiv.classList.remove('active');
+            }
         }
 
-        uploadBtn.addEventListener('click', () => fileInput.click());
-        dropZone.addEventListener('click', (e) => {
-            e.preventDefault();
-            fileInput.click();
-        });
-
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('dragover');
-        });
-        dropZone.addEventListener('dragleave', () => {
-            dropZone.classList.remove('dragover');
-        });
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length) handleFile(files[0]);
-        });
-
-        fileInput.addEventListener('change', (e) => {
-            console.log('File input change event fired');
-            console.log('Files:', e.target.files);
-            if (e.target.files.length) {
-                handleFile(e.target.files[0]);
-            } else {
-                console.log('No files selected');
-            }
-        });
+        function showError(msg) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = msg;
+            errorDiv.classList.add('active');
+            document.getElementById('spinner').classList.remove('active');
+        }
 
         function handleFile(file) {
+            console.log('handleFile called', file);
+            if (!file) {
+                showError('No file selected');
+                return;
+            }
             if (!['image/jpeg', 'image/png', 'image/jpg'].includes(file.type)) {
                 showError('Only JPEG and PNG images are supported.');
                 return;
@@ -256,21 +191,18 @@
                 return;
             }
 
-            errorDiv.classList.remove('active');
+            document.getElementById('error').classList.remove('active');
             setStatus('Loading preview...');
-            preview.style.display = 'block';
-            resultDiv.style.display = 'none';
-            legend.style.display = 'none';
+            document.getElementById('preview').style.display = 'block';
+            document.getElementById('result').style.display = 'none';
 
             const reader = new FileReader();
-            reader.onload = (e) => {
-                previewImg.src = e.target.result;
-                console.log('Preview loaded, starting upload...');
-                setStatus('');
+            reader.onload = function(e) {
+                document.getElementById('previewImg').src = e.target.result;
+                setStatus('Uploading...');
                 upload(file);
             };
-            reader.onerror = (e) => {
-                console.error('FileReader error:', e);
+            reader.onerror = function() {
                 setStatus('');
                 showError('Failed to read image file.');
             };
@@ -278,9 +210,8 @@
         }
 
         async function upload(file) {
-            setStatus('Uploading photo...');
-            spinner.classList.add('active');
-            console.log('Uploading file:', file.name, 'type:', file.type, 'size:', file.size);
+            document.getElementById('spinner').classList.add('active');
+            console.log('Uploading file:', file.name, file.type, file.size);
 
             const formData = new FormData();
             formData.append('file', file);
@@ -291,7 +222,7 @@
                     body: formData
                 });
 
-                spinner.classList.remove('active');
+                document.getElementById('spinner').classList.remove('active');
                 console.log('Response status:', response.status);
 
                 if (!response.ok) {
@@ -310,22 +241,15 @@
                 const blob = await response.blob();
                 console.log('Response blob size:', blob.size);
                 const url = URL.createObjectURL(blob);
-                resultImg.src = url;
-                resultDiv.style.display = 'block';
-                legend.style.display = 'block';
+                document.getElementById('resultImg').src = url;
+                document.getElementById('result').style.display = 'block';
                 setStatus('Analysis complete!');
             } catch (err) {
-                spinner.classList.remove('active');
+                document.getElementById('spinner').classList.remove('active');
                 setStatus('');
                 console.error('Upload error:', err);
-                showError('Network error. Please check your connection and try again.');
+                showError('Network error: ' + err.message);
             }
-        }
-
-        function showError(msg) {
-            errorDiv.textContent = msg;
-            errorDiv.classList.add('active');
-            spinner.classList.remove('active');
         }
     </script>
 </body>
