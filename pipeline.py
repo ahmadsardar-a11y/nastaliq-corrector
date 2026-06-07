@@ -65,6 +65,17 @@ def preprocess(image: np.ndarray) -> np.ndarray:
     return binary
 
 
+def remove_horizontal_lines(binary: np.ndarray) -> np.ndarray:
+    """Remove long horizontal lines (practice paper lines) from binary image."""
+    # Use horizontal kernel to detect horizontal lines
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (50, 1))
+    # Detect horizontal lines
+    horizontal_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel, iterations=2)
+    # Remove horizontal lines from binary image
+    result = cv2.subtract(binary, horizontal_lines)
+    return result
+
+
 def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
     """Segment preprocessed image into individual letter components.
 
@@ -73,10 +84,13 @@ def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
     - 'bbox': (x, y, w, h) bounding rect
     - 'contour': the contour
     """
-    # Find connected components with stats
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    # Remove horizontal practice lines first
+    binary_clean = remove_horizontal_lines(binary)
 
-    h_total, w_total = binary.shape
+    # Find connected components with stats
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_clean, connectivity=8)
+
+    h_total, w_total = binary_clean.shape
     max_area = MAX_COMPONENT_AREA * h_total * w_total
 
     components = []
@@ -88,12 +102,11 @@ def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
             continue
 
         # Filter out long thin lines (practice lines, not letters)
-        aspect_ratio = w / h if h > 0 else 0
-        if aspect_ratio > 5 or aspect_ratio < 0.2:
-            # Too long and thin (horizontal line) or too tall and narrow
-            # Allow if it's a reasonable letter size
-            if area < 500:  # Small lines are definitely not letters
-                continue
+        # A line is very long in one dimension and very short in the other
+        is_long_horizontal = w > h * 5 and h < 10  # Wide but short
+        is_long_vertical = h > w * 5 and w < 10    # Tall but narrow
+        if is_long_horizontal or is_long_vertical:
+            continue  # Definitely a practice line
 
         # Extract mask for this component
         mask = np.zeros_like(binary)
