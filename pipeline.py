@@ -65,8 +65,8 @@ def preprocess(image: np.ndarray) -> np.ndarray:
 
     # Morphological closing to reconnect thin strokes that got separated
     # This helps letters like ب (bowl + tail) stay as one component
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
 
     return binary
 
@@ -95,16 +95,16 @@ def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
 
         # Filter out long thin lines (practice lines, not letters)
         # A line is very long in one dimension and very short in the other
-        is_long_horizontal = w > h * 8 and h < 10  # Wide but short
-        is_long_vertical = h > w * 8 and w < 10    # Tall but narrow
+        is_long_horizontal = w > h * 12 and h < 6  # Very wide but very short = practice line
+        is_long_vertical = h > w * 12 and w < 6    # Very tall but very narrow = practice line
         if is_long_horizontal or is_long_vertical:
             continue  # Definitely a practice line
 
-        # Also filter by filling ratio - letters have more solid area
-        # A line has a very low filling ratio compared to its bounding box
+        # Also filter by filling ratio - but be more lenient for curved Nastaliq strokes
+        # which can be elongated but still have moderate fill ratio
         bbox_area = w * h
         fill_ratio = area / bbox_area if bbox_area > 0 else 0
-        if fill_ratio < 0.15 and (w > h * 3 or h > w * 3):
+        if fill_ratio < 0.08 and (w > h * 5 or h > w * 5):
             # Very sparse component - likely a line or artifact
             continue
 
@@ -126,7 +126,57 @@ def segment(binary: np.ndarray) -> List[Dict[str, Any]]:
             'area': area
         })
 
-    return components
+    # Merge nearby components that are likely parts of the same Nastaliq letter
+    # (e.g., thick bowl + thin tail of ب that got separated during thresholding)
+    MERGE_DISTANCE = 20  # pixels
+    merged = []
+    used = set()
+
+    for i, comp_a in enumerate(components):
+        if i in used:
+            continue
+        x1, y1, w1, h1 = comp_a['bbox']
+        cx1, cy1 = x1 + w1//2, y1 + h1//2
+
+        # Start with this component's mask
+        merged_mask = comp_a['mask'].copy()
+        merged_bbox = [x1, y1, w1, h1]
+        merged_area = comp_a['area']
+
+        for j, comp_b in enumerate(components):
+            if j == i or j in used:
+                continue
+            x2, y2, w2, h2 = comp_b['bbox']
+            cx2, cy2 = x2 + w2//2, y2 + h2//2
+
+            # Check distance between centers
+            dist = np.sqrt((cx1 - cx2)**2 + (cy1 - cy2)**2)
+            if dist < MERGE_DISTANCE:
+                # Merge masks
+                merged_mask = cv2.bitwise_or(merged_mask, comp_b['mask'])
+                # Expand bounding box
+                merged_bbox[0] = min(merged_bbox[0], x2)
+                merged_bbox[1] = min(merged_bbox[1], y2)
+                merged_bbox[2] = max(merged_bbox[0] + merged_bbox[2], x2 + w2) - merged_bbox[0]
+                merged_bbox[3] = max(merged_bbox[1] + merged_bbox[3], y2 + h2) - merged_bbox[1]
+                merged_area += comp_b['area']
+                used.add(j)
+
+        used.add(i)
+
+        # Recalculate contour from merged mask
+        merged_bbox = tuple(merged_bbox)
+        contours, _ = cv2.findContours(merged_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            merged_contour = max(contours, key=cv2.contourArea)
+            merged.append({
+                'mask': merged_mask,
+                'bbox': merged_bbox,
+                'contour': merged_contour,
+                'area': merged_area
+            })
+
+    return merged
 
 
 def classify(component: Dict[str, Any], references: Dict[str, np.ndarray]) -> Tuple[str, float]:
