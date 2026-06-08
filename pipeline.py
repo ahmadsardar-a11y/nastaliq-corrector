@@ -56,11 +56,17 @@ def preprocess(image: np.ndarray) -> np.ndarray:
     else:
         gray = image.copy()
 
-    # Gaussian blur for noise reduction
-    blurred = cv2.GaussianBlur(gray, BLUR_KERNEL_SIZE, 0)
+    # Gaussian blur for noise reduction — use smaller kernel to preserve thin strokes
+    # Nastaliq has thin tails (e.g., ب) that blur can destroy
+    blurred = cv2.GaussianBlur(gray, (1, 1), 0)
 
     # Otsu thresholding (inverse so text is white on black)
     _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Morphological closing to reconnect thin strokes that got separated
+    # This helps letters like ب (bowl + tail) stay as one component
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     return binary
 
@@ -143,17 +149,17 @@ def classify(component: Dict[str, Any], references: Dict[str, np.ndarray]) -> Tu
     best_score = -1.0
 
     for label, ref_img in references.items():
-        # Resize reference to match crop dimensions
+        # Resize reference to match crop dimensions (same scale)
         ref_resized = cv2.resize(ref_img, (w, h))
         # Invert reference to match mask polarity (mask is white-on-black)
         ref_inverted = cv2.bitwise_not(ref_resized)
 
-        # Template matching
-        result = cv2.matchTemplate(crop, ref_inverted, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(result)
+        # Direct pixel comparison since sizes match exactly
+        diff = cv2.absdiff(crop.astype(np.float32), ref_inverted.astype(np.float32))
+        score = 1.0 - (np.mean(diff) / 255.0)
 
-        if max_val > best_score:
-            best_score = max_val
+        if score > best_score:
+            best_score = score
             best_label = label
 
     # Fallback: contour shape comparison if template matching is weak
@@ -273,26 +279,21 @@ def annotate(image: np.ndarray, measurements: List[Dict[str, Any]], references: 
         ref_h, ref_w = ref_img.shape[:2]
 
         if ref_w > 0 and ref_h > 0:
-            # Resize reference to match user's letter bbox
-            scale = min(w / ref_w, h / ref_h)
-            new_w = max(1, int(ref_w * scale))
-            new_h = max(1, int(ref_h * scale))
+            # Resize reference to match user's letter bbox (stretch to fit)
+            new_w = max(1, w)
+            new_h = max(1, h)
 
             ref_resized = cv2.resize(ref_img, (new_w, new_h))
 
-            # Center the reference over user's letter
-            offset_x = x + (w - new_w) // 2
-            offset_y = y + (h - new_h) // 2
-
-            # Clamp to image bounds
-            x1 = max(0, offset_x)
-            y1 = max(0, offset_y)
-            x2 = min(w_img, offset_x + new_w)
-            y2 = min(h_img, offset_y + new_h)
+            # Place directly over user's letter bbox (no centering offset)
+            x1 = max(0, x)
+            y1 = max(0, y)
+            x2 = min(w_img, x + new_w)
+            y2 = min(h_img, y + new_h)
 
             # Map back to reference coords
-            rx1 = max(0, -offset_x)
-            ry1 = max(0, -offset_y)
+            rx1 = 0
+            ry1 = 0
             rx2 = rx1 + (x2 - x1)
             ry2 = ry1 + (y2 - y1)
 
@@ -316,19 +317,18 @@ def annotate(image: np.ndarray, measurements: List[Dict[str, Any]], references: 
                     # Thick bold outline
                     cv2.drawContours(annotated, [cnt_shifted], -1, CYAN, 4)
 
-    # --- Baseline ---
+    # --- Baseline marker (green) ---
     baseline_y = y + h - 5
-    cv2.line(annotated, (x - 10, baseline_y), (x + w + 10, baseline_y), GREEN, 2)
+    cv2.line(annotated, (x, baseline_y), (x + w, baseline_y), GREEN, 2)
 
-    # --- Connection point ---
+    # --- Connection point (magenta) ---
     conn_x = x + w - 5
     conn_y = y + h - 5
     cv2.circle(annotated, (conn_x, conn_y), 4, MAGENTA, -1)
 
-    # --- Header text ---
-    cv2.putText(annotated, f"Detected: {label} ({confidence:.0%})", (20, 30),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, WHITE, 2)
-    cv2.putText(annotated, "Cyan outline = ideal shape", (20, 55),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, CYAN, 2)
+    # --- Confidence label (top-left of bbox) ---
+    label_text = f"{label} ({confidence:.0%})" if label else "?"
+    cv2.putText(annotated, label_text, (x, max(20, y - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, WHITE, 2)
 
     return annotated
